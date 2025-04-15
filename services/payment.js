@@ -121,7 +121,7 @@ const generatePaymentRequest = async (donation) => {
     }
 
     if (!response.data.data?.instrumentResponse?.redirectInfo?.url) {
-      console.error('No redirect URL provided by PhonePe API');
+      console.error('No redirect URL provided by PhonePe API. Full response:', response.data);
       throw new Error('No redirect URL provided by PhonePe API');
     }
 
