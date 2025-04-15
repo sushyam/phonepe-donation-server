@@ -4,6 +4,28 @@ const { SUPABASE_URL, SUPABASE_KEY } = require('../config/supabase');
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Helper: Map DB donation (snake_case) to JS (camelCase)
+function mapDonationFromDb(dbDonation) {
+  if (!dbDonation) return dbDonation;
+  return {
+    ...dbDonation,
+    userId: dbDonation.user_id,
+    paymentId: dbDonation.payment_id,
+    donorInfo: dbDonation.donor_info,
+    familyInfo: dbDonation.family_info,
+    paymentDetails: dbDonation.payment_details,
+    createdAt: dbDonation.created_at,
+    updatedAt: dbDonation.updated_at,
+    // fallback to camelCase for status
+    status: dbDonation.status,
+    amount: dbDonation.amount,
+    type: dbDonation.type,
+    frequency: dbDonation.frequency,
+    id: dbDonation.id,
+    paymentUrl: dbDonation.payment_url
+  };
+}
+
 // Donation service
 const donationService = {
   // Create a new donation
@@ -15,7 +37,7 @@ const donationService = {
       .single();
     
     if (error) throw error;
-    return data;
+    return mapDonationFromDb(data);
   },
 
   // Get donation by ID
@@ -27,7 +49,7 @@ const donationService = {
       .single();
     
     if (error) throw error;
-    return data;
+    return mapDonationFromDb(data);
   },
 
   // Get donations by user ID
@@ -35,11 +57,11 @@ const donationService = {
     const { data, error } = await supabase
       .from('donations')
       .select('*')
-      .eq('userId', userId)
-      .order('createdAt', { ascending: false });
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
     
     if (error) throw error;
-    return data;
+    return Array.isArray(data) ? data.map(mapDonationFromDb) : [];
   },
 
   // Update donation
@@ -52,7 +74,7 @@ const donationService = {
       .single();
     
     if (error) throw error;
-    return data;
+    return mapDonationFromDb(data);
   },
 
   // Delete donation
@@ -71,11 +93,11 @@ const donationService = {
     const { data, error } = await supabase
       .from('donations')
       .select('*')
-      .eq('paymentId', paymentId)
+      .eq('payment_id', paymentId)
       .single();
     
     if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "No rows returned"
-    return data;
+    return mapDonationFromDb(data);
   }
 };
 

@@ -172,7 +172,14 @@ const verifyPayment = async (merchantTransactionId) => {
     }
     return response.data;
   } catch (error) {
-    console.error('Error verifying payment:', error.response?.data || error.message);
+    // Log the full error details for debugging
+    if (error.response) {
+      console.error('Error verifying payment - response data:', error.response.data);
+      console.error('Error verifying payment - status:', error.response.status);
+      console.error('Error verifying payment - headers:', error.response.headers);
+    } else {
+      console.error('Error verifying payment:', error.message);
+    }
     
     // Only use test response in development mode
     if (process.env.NODE_ENV === 'development' && process.env.USE_TEST_PAYMENT === 'true') {
@@ -190,9 +197,10 @@ const verifyPayment = async (merchantTransactionId) => {
         }
       };
     }
-    
-    // In production, throw the error
-    throw error;
+    // In production, throw a more informative error
+    const errorMsg = error.response?.data?.message || error.message || 'Unknown error verifying payment';
+    const errorCode = error.response?.data?.code || 'UNKNOWN_ERROR';
+    throw new Error(`PhonePe payment verification failed [${errorCode}]: ${errorMsg}`);
   }
 };
 
