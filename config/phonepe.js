@@ -14,10 +14,10 @@ const config = {
   // URLs - will use development or production based on environment
   REDIRECT_URL: process.env.REDIRECT_URL || (process.env.NODE_ENV === 'development' 
     ? 'http://localhost:3001/api/donations/payment-status' 
-    : 'https://donate.gomantakgausevak.com/api/donations/payment-status'),
+    : 'https://phonepe-donation-server.onrender.com/api/donations/payment-status'),
   CALLBACK_URL: process.env.CALLBACK_URL || (process.env.NODE_ENV === 'development' 
     ? 'http://localhost:3001/api/donations/callback' 
-    : 'https://donate.gomantakgausevak.com/api/donations/callback'),
+    : 'https://phonepe-donation-server.onrender.com/api/donations/callback'),
   
   // Response type
   RESPONSE_TYPE: 'POST',

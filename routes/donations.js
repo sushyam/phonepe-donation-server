@@ -94,7 +94,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Update donation status after payment
-router.post('/payment-status/:transactionId', async (req, res) => {
+router.all('/payment-status/:transactionId', async (req, res) => {
   try {
     const { transactionId } = req.params;
     console.log('Checking payment status for transaction:', transactionId);
@@ -199,7 +199,7 @@ router.post('/payment-status/:transactionId', async (req, res) => {
 });
 
 // Payment callback endpoint
-router.post('/callback', async (req, res) => {
+router.all('/callback', async (req, res) => {
   try {
     const { merchantTransactionId, transactionId, code, status } = req.body;
     console.log('Payment callback received:', req.body);

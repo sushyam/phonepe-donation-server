@@ -27,9 +27,13 @@ const generatePaymentRequest = async (donation) => {
       merchantId: config.MERCHANT_ID,
       merchantTransactionId: merchantTransactionId,
       amount,
-      redirectUrl: config.REDIRECT_URL,
-      redirectMode: 'POST',
-      callbackUrl: config.CALLBACK_URL,
+      redirectUrl: process.env.NODE_ENV === 'production'
+        ? 'https://donate.gomantakgausevak.com/thank-you'
+        : 'http://localhost:3000/thank-you',
+      redirectMode: 'REDIRECT',
+      callbackUrl: process.env.NODE_ENV === 'production'
+        ? 'https://phonepe-donation-server.onrender.com/api/donations/callback'
+        : 'http://localhost:3001/api/donations/callback',
       merchantUserId: donation.userId ? donation.userId.toString() : 'GUEST',
       mobileNumber: donation.donorInfo?.phone || '',
       deviceContext: {
