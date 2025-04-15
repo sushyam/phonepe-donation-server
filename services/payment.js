@@ -2,6 +2,27 @@ const crypto = require('crypto');
 const axios = require('axios');
 const config = require('../config/phonepe');
 
+// --- PhonePe OAuth Access Token Fetch ---
+async function getPhonePeAccessToken() {
+  try {
+    const resp = await axios.post(
+      'https://api.phonepe.com/oauth/token', // Update if your PhonePe docs specify a different endpoint
+      {
+        client_id: config.CLIENT_ID,
+        client_secret: config.CLIENT_SECRET,
+        grant_type: config.GRANT_TYPE
+      }
+    );
+    if (!resp.data.access_token) {
+      throw new Error('No access token returned by PhonePe');
+    }
+    return resp.data.access_token;
+  } catch (error) {
+    console.error('Failed to fetch PhonePe access token:', error.response?.data || error.message);
+    throw new Error('Failed to fetch PhonePe access token');
+  }
+}
+
 const generatePaymentRequest = async (donation) => {
   let merchantTransactionId, base64Payload, checksum;
 
@@ -24,7 +45,7 @@ const generatePaymentRequest = async (donation) => {
     });
 
     const payload = {
-      merchantId: config.MERCHANT_ID,
+      merchantId: config.MERCHANT_ID || config.CLIENT_ID, // fallback for new/old flows
       merchantTransactionId: merchantTransactionId,
       amount,
       redirectUrl: process.env.NODE_ENV === 'production'
@@ -44,10 +65,17 @@ const generatePaymentRequest = async (donation) => {
       }
     };
 
+
     console.log('Creating payload for payment request');
     base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
     
-    // Generate checksum
+    // --- OAuth/token-based flow: fetch token and use in Authorization header ---
+    let token;
+    if (!process.env.NODE_ENV || process.env.NODE_ENV === 'production') {
+      token = await getPhonePeAccessToken();
+    }
+
+    // Generate checksum (legacy, may not be needed in new flow)
     const string = `${base64Payload}/pg/v1/pay${config.CLIENT_SECRET}`;
     const sha256 = crypto.createHash('sha256').update(string).digest('hex');
     checksum = `${sha256}###${config.SALT_INDEX}`;
@@ -65,6 +93,7 @@ const generatePaymentRequest = async (donation) => {
       };
     }
 
+    // --- Use Bearer token for modern flow ---
     const response = await axios.post(
       `${config.API_URL}/pg/v1/pay`,
       {
@@ -74,8 +103,12 @@ const generatePaymentRequest = async (donation) => {
         headers: {
           accept: 'application/json',
           'Content-Type': 'application/json',
-          'X-VERIFY': checksum,
-          'X-MERCHANT-ID': config.MERCHANT_ID
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          // If legacy, may still need X-VERIFY and X-MERCHANT-ID
+          ...(token ? {} : {
+            'X-VERIFY': checksum,
+            'X-MERCHANT-ID': config.MERCHANT_ID
+          })
         }
       }
     );
