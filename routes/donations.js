@@ -52,7 +52,29 @@ router.post('/', async (req, res) => {
     const donation = await donationService.createDonation(donationData);
 
     // Generate payment request
-    const { paymentUrl, merchantTransactionId } = await generatePaymentRequest(donation);
+    let paymentUrl, merchantTransactionId;
+    try {
+      const paymentResult = await generatePaymentRequest(donation);
+      paymentUrl = paymentResult.paymentUrl;
+      merchantTransactionId = paymentResult.merchantTransactionId;
+    } catch (paymentError) {
+      console.error('Payment request failed:', paymentError);
+      // Delete the donation since payment failed
+      await donationService.deleteDonation(donation.id);
+      return res.status(500).json({
+        message: 'Failed to initiate payment. Please try again.',
+        error: paymentError.message || paymentError
+      });
+    }
+
+    // If paymentUrl is not returned, treat as error
+    if (!paymentUrl) {
+      console.error('No paymentUrl returned from PhonePe. Deleting donation.');
+      await donationService.deleteDonation(donation.id);
+      return res.status(500).json({
+        message: 'Payment gateway did not return a payment URL. Please try again later.'
+      });
+    }
 
     // Update donation with transaction ID
     await donationService.updateDonation(donation.id, { paymentId: merchantTransactionId });
@@ -64,7 +86,10 @@ router.post('/', async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating donation:', error);
-    res.status(500).json({ message: 'Error creating donation' });
+    res.status(500).json({
+      message: error.message || 'Error creating donation',
+      error: error.message
+    });
   }
 });
 
