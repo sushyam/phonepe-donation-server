@@ -1,0 +1,21 @@
+﻿# dependencies
+node_modules/
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# cache
+.cache/
+.npm/
+
+# misc
+.DS_Store
+.vscode/
+.idea/
