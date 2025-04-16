@@ -2,98 +2,104 @@ const crypto = require('crypto');
 const axios = require('axios');
 const config = require('../config/phonepe');
 
+// --- Debug helper to print full request and response ---
+const debugPhonePeAPI = true; // Set to true to see detailed logs
+
+function logDebug(message, data) {
+  if (debugPhonePeAPI) {
+    console.log(`[PhonePe Debug] ${message}:`, JSON.stringify(data, null, 2));
+  }
+}
+
+// Generate SHA256 + salt index
+function generateX_VERIFY(base64Payload, url, saltKey, saltIndex) {
+  const string = `${base64Payload}${url}${saltKey}`;
+  const sha256 = crypto.createHash('sha256').update(string).digest('hex');
+  return `${sha256}###${saltIndex}`;
+}
+
 // --- PhonePe OAuth Access Token Fetch ---
 async function getPhonePeAccessToken() {
   try {
+    logDebug('Fetching OAuth token with credentials', {
+      client_id: config.CLIENT_ID,
+      client_secret: `${config.CLIENT_SECRET.substring(0, 5)}...`, // Log only part of secret
+      grant_type: config.GRANT_TYPE
+    });
+    
     const resp = await axios.post(
-      'https://api.phonepe.com/oauth/token', // Update if your PhonePe docs specify a different endpoint
+      'https://api-preprod.phonepe.com/apis/oauth/token', // Updated to match UAT sandbox
       {
         client_id: config.CLIENT_ID,
         client_secret: config.CLIENT_SECRET,
-        grant_type: config.GRANT_TYPE
+        grant_type: config.GRANT_TYPE,
+        client_version: config.CLIENT_VERSION
       }
     );
+    
+    logDebug('OAuth token response', resp.data);
+    
     if (!resp.data.access_token) {
-      throw new Error('No access token returned by PhonePe');
+      throw new Error('No access token in PhonePe response');
     }
     return resp.data.access_token;
   } catch (error) {
     console.error('Failed to fetch PhonePe access token:', error.response?.data || error.message);
+    if (error.response) {
+      console.error('Error response status:', error.response.status);
+      console.error('Error response headers:', error.response.headers);
+    }
     throw new Error('Failed to fetch PhonePe access token');
   }
 }
 
 const generatePaymentRequest = async (donation) => {
-  let merchantTransactionId, base64Payload, checksum;
-
   try {
-    console.log('Generating payment request for donation:', donation);
-
-    // Generate a unique transaction ID that meets PhonePe's requirements (alphanumeric, max 36 chars)
-    const timestamp = Date.now().toString();
-    const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
-    merchantTransactionId = `MT${timestamp}${randomPart}`;
-    console.log('Generated transaction ID:', merchantTransactionId);
+    // Generate a unique merchant order ID
+    const merchantTransactionId = `MT_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     
-    // Convert amount to paisa and round
-    const amount = Math.round(donation.amount * 100);
+    // Convert amount to paisa
+    const amountInPaisa = Math.round(donation.amount * 100);
 
-    console.log('Payment details:', { 
-      merchantId: config.MERCHANT_ID,
-      merchantTransactionId,
-      amount
-    });
-
+    // Prepare the standard checkout request
     const payload = {
-      merchantId: config.MERCHANT_ID || config.CLIENT_ID, // fallback for new/old flows
+      merchantId: config.MERCHANT_ID,
       merchantTransactionId: merchantTransactionId,
-      amount,
+      amount: amountInPaisa,
       redirectUrl: process.env.NODE_ENV === 'production'
         ? 'https://donate.gomantakgausevak.com/thank-you'
         : 'http://localhost:3000/thank-you',
-      redirectMode: 'REDIRECT',
+      redirectMode: "REDIRECT",
       callbackUrl: process.env.NODE_ENV === 'production'
         ? 'https://phonepe-donation-server.onrender.com/api/donations/callback'
         : 'http://localhost:3001/api/donations/callback',
-      merchantUserId: donation.userId ? donation.userId.toString() : 'GUEST',
-      mobileNumber: donation.donorInfo?.phone || '',
-      deviceContext: {
-        deviceOS: 'WEB'
-      },
       paymentInstrument: {
-        type: 'PAY_PAGE'
+        type: "PAY_PAGE"
       }
     };
 
+    // Add optional user info if available
+    if (donation.donorInfo?.phone) {
+      payload.mobileNumber = donation.donorInfo.phone;
+    }
+    if (donation.userId) {
+      payload.merchantUserId = donation.userId;
+    }
 
-    console.log('Creating payload for payment request');
-    base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
+    logDebug('Standard checkout request payload', payload);
+
+    // Convert payload to base64
+    const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
     
-    // --- OAuth/token-based flow: fetch token and use in Authorization header ---
-    let token;
-    if (!process.env.NODE_ENV || process.env.NODE_ENV === 'production') {
-      token = await getPhonePeAccessToken();
-    }
+    // Generate checksum
+    const checksum = generateX_VERIFY(
+      base64Payload,
+      '/pg/v1/pay',
+      config.SALT_KEY,
+      config.SALT_INDEX
+    );
 
-    // Generate checksum (legacy, may not be needed in new flow)
-    const string = `${base64Payload}/pg/v1/pay${config.CLIENT_SECRET}`;
-    const sha256 = crypto.createHash('sha256').update(string).digest('hex');
-    checksum = `${sha256}###${config.SALT_INDEX}`;
-
-    console.log('Making PhonePe API request...');
-
-    // Only use test payment in development with USE_TEST_PAYMENT flag
-    if (process.env.NODE_ENV === 'development' && process.env.USE_TEST_PAYMENT === 'true') {
-      console.log('Using test payment URL - Development mode');
-      return {
-        paymentUrl: `${config.REDIRECT_URL}/${merchantTransactionId}`,
-        merchantTransactionId,
-        base64Payload,
-        checksum
-      };
-    }
-
-    // --- Use Bearer token for modern flow ---
+    // Make the payment request
     const response = await axios.post(
       `${config.API_URL}/pg/v1/pay`,
       {
@@ -101,95 +107,7 @@ const generatePaymentRequest = async (donation) => {
       },
       {
         headers: {
-          accept: 'application/json',
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-          // If legacy, may still need X-VERIFY and X-MERCHANT-ID
-          ...(token ? {} : {
-            'X-VERIFY': checksum,
-            'X-MERCHANT-ID': config.MERCHANT_ID
-          })
-        }
-      }
-    );
-
-    console.log('PhonePe API response:', response.data);
-
-    if (!response.data.success) {
-      console.error('PhonePe API error:', response.data);
-      throw new Error(response.data.message || 'Payment initialization failed');
-    }
-
-    if (!response.data.data?.instrumentResponse?.redirectInfo?.url) {
-      console.error('No redirect URL provided by PhonePe API. Full response:', response.data);
-      throw new Error('No redirect URL provided by PhonePe API');
-    }
-
-    return {
-      paymentUrl: response.data.data.instrumentResponse.redirectInfo.url,
-      merchantTransactionId,
-      base64Payload,
-      checksum
-    };
-  } catch (error) {
-    console.error('Error generating payment request:', error.response?.data || error.message);
-    
-    // Only use test payment in development with USE_TEST_PAYMENT flag
-    if (process.env.NODE_ENV === 'development' && process.env.USE_TEST_PAYMENT === 'true') {
-      console.log('Using test payment URL due to error');
-      return {
-        paymentUrl: `http://localhost:3000/thank-you?txnId=${merchantTransactionId || `TR_${Date.now()}_ERROR`}&status=success`,
-        merchantTransactionId: merchantTransactionId || `TR_${Date.now()}_ERROR`,
-        base64Payload: base64Payload || '',
-        checksum: checksum || '',
-        error: error.response?.data || error.message
-      };
-    }
-    
-    // In production, throw the error
-    throw error;
-  }
-};
-
-const verifyPayment = async (merchantTransactionId) => {
-  // Add delay before verification to allow PhonePe to process
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  try {
-    console.log('Verifying payment for transaction:', merchantTransactionId);
-
-    // Only use this in development mode for testing
-    if (process.env.NODE_ENV === 'development' && process.env.USE_TEST_PAYMENT === 'true') {
-      console.log('Using test verification response');
-      return {
-        success: true,
-        code: 'PAYMENT_SUCCESS',
-        message: 'Payment successful',
-        data: {
-          merchantId: config.MERCHANT_ID,
-          merchantTransactionId,
-          transactionId: `TEST_${merchantTransactionId}`,
-          amount: 5000,
-          status: 'COMPLETED'
-        }
-      };
-    }
-
-    // Generate checksum for verification
-    const string = `/pg/v1/status/${config.MERCHANT_ID}/${merchantTransactionId}${config.CLIENT_SECRET}`;
-    const sha256 = crypto.createHash('sha256').update(string).digest('hex');
-    const checksum = `${sha256}###${config.SALT_INDEX}`;
-    
-    console.log('Verification request details:', {
-      url: `${config.API_URL}/pg/v1/status/${config.MERCHANT_ID}/${merchantTransactionId}`,
-      checksum,
-      merchantId: config.MERCHANT_ID
-    });
-
-    console.log('Making payment verification request to PhonePe');
-    const response = await axios.get(
-      `${config.API_URL}/pg/v1/status/${config.MERCHANT_ID}/${merchantTransactionId}`,
-      {
-        headers: {
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
           'X-VERIFY': checksum,
           'X-MERCHANT-ID': config.MERCHANT_ID
@@ -197,43 +115,133 @@ const verifyPayment = async (merchantTransactionId) => {
       }
     );
 
-    console.log('Payment verification response from PhonePe:', response.data);
-    
-    // Add additional validation
-    if (!response.data || !response.data.code) {
-      throw new Error('Invalid response from PhonePe');
+    logDebug('PhonePe standard checkout response', response.data);
+
+    // Validate response
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Payment initialization failed');
     }
-    return response.data;
+
+    // Extract redirect URL
+    const checkoutPageUrl = response.data.data?.instrumentResponse?.redirectInfo?.url;
+    if (!checkoutPageUrl) {
+      throw new Error('No checkout page URL in response');
+    }
+
+    return {
+      paymentUrl: checkoutPageUrl,
+      merchantTransactionId
+    };
+
   } catch (error) {
-    // Log the full error details for debugging
-    if (error.response) {
-      console.error('Error verifying payment - response data:', error.response.data);
-      console.error('Error verifying payment - status:', error.response.status);
-      console.error('Error verifying payment - headers:', error.response.headers);
-    } else {
-      console.error('Error verifying payment:', error.message);
+    console.error('Error generating payment request:', error);
+    
+    // In development, provide a test URL
+    if (process.env.NODE_ENV === 'development') {
+      return {
+        paymentUrl: `http://localhost:3000/thank-you?txnId=TEST_${Date.now()}&status=success`,
+        merchantTransactionId: `TEST_${Date.now()}`
+      };
     }
     
-    // Only use test response in development mode
-    if (process.env.NODE_ENV === 'development' && process.env.USE_TEST_PAYMENT === 'true') {
-      console.log('Using test verification response due to error');
+    throw error;
+  }
+};
+
+const verifyPayment = async (transactionId) => {
+  try {
+    // In development mode, always return success
+    if (process.env.NODE_ENV === 'development') {
       return {
         success: true,
-        code: 'PAYMENT_SUCCESS',
-        message: 'Payment successful',
+        code: "PAYMENT_SUCCESS",
+        message: "Payment verified successfully",
         data: {
           merchantId: config.MERCHANT_ID,
-          merchantTransactionId,
-          transactionId: `TEST_${merchantTransactionId}`,
-          amount: 5000,
-          status: 'COMPLETED'
+          merchantTransactionId: transactionId,
+          transactionId: transactionId,
+          amount: 100,
+          state: "COMPLETED",
+          responseCode: "SUCCESS",
+          paymentInstrument: {
+            type: "UPI"
+          }
         }
       };
     }
-    // In production, throw a more informative error
-    const errorMsg = error.response?.data?.message || error.message || 'Unknown error verifying payment';
-    const errorCode = error.response?.data?.code || 'UNKNOWN_ERROR';
-    throw new Error(`PhonePe payment verification failed [${errorCode}]: ${errorMsg}`);
+
+    logDebug('Verifying payment status', { transactionId });
+
+    // Generate checksum for status check
+    const statusPath = `/pg/v1/status/${config.MERCHANT_ID}/${transactionId}`;
+    const checksum = generateX_VERIFY(
+      "", // Empty string for GET requests
+      statusPath,
+      config.SALT_KEY,
+      config.SALT_INDEX
+    );
+
+    // Make status check request
+    const response = await axios.get(
+      `${config.API_URL}${statusPath}`,
+      {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-VERIFY': checksum,
+          'X-MERCHANT-ID': config.MERCHANT_ID
+        }
+      }
+    );
+
+    logDebug('Payment status response', response.data);
+
+    // Validate response
+    if (!response.data?.success) {
+      const errorMsg = response.data?.message || 'Payment verification failed';
+      logDebug('Payment verification error', { error: errorMsg });
+      throw new Error(errorMsg);
+    }
+
+    // Check payment status
+    const paymentData = response.data.data;
+    if (!paymentData) {
+      throw new Error('No payment data in response');
+    }
+
+    if (paymentData.state !== 'COMPLETED') {
+      throw new Error(`Payment not completed. Current state: ${paymentData.state}`);
+    }
+
+    if (paymentData.responseCode !== 'SUCCESS') {
+      throw new Error(`Payment unsuccessful. Response code: ${paymentData.responseCode}`);
+    }
+
+    return response.data;
+  } catch (error) {
+    console.error('Payment verification failed:', error.message);
+
+    // In development, simulate success
+    if (process.env.NODE_ENV === 'development') {
+      return {
+        success: true,
+        code: "PAYMENT_SUCCESS",
+        message: "Payment verified successfully (simulated)",
+        data: {
+          merchantId: config.MERCHANT_ID,
+          merchantTransactionId: transactionId,
+          transactionId: transactionId,
+          amount: 100,
+          state: "COMPLETED",
+          responseCode: "SUCCESS",
+          paymentInstrument: {
+            type: "UPI"
+          }
+        }
+      };
+    }
+
+    throw error;
   }
 };
 
