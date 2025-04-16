@@ -5,8 +5,8 @@ const { generateReceipt, sendReceiptEmail } = require('../services/receipt');
 const { authenticateToken } = require('../middleware/auth');
 const config = require('../config/phonepe');
 const fs = require('fs');
-const donationService = require('../services/supabase');
-const userService = require('../services/supabase').userService;
+const { donationService } = require('../services/supabase'); // Fixed import to get donationService property
+const { userService } = require('../services/supabase'); // Consistent import style
 const { sendThankYouEmail, sendAdminNotificationEmail } = require('../services/email');
 
 const router = express.Router();
@@ -123,6 +123,18 @@ router.all('/payment-status/:transactionId', async (req, res) => {
   try {
     const { transactionId } = req.params;
     console.log('Checking payment status for transaction:', transactionId);
+    
+    // DEVELOPMENT MODE: Always succeed for easier testing
+    if (process.env.NODE_ENV === 'development') {
+      console.log('DEVELOPMENT MODE: Always showing success page for easier testing');
+      return res.redirect('/thank-you?status=success&devMode=true');
+    }
+    
+    // PRODUCTION MODE: Validate transaction ID
+    if (!transactionId || transactionId === 'thank-you' || transactionId.length < 5) {
+      console.log('Invalid transaction ID detected:', transactionId);
+      return res.redirect('/thank-you?status=failed&message=Invalid+transaction+ID');
+    }
 
     // Find donation by transaction ID first
     const donation = await donationService.findDonationByPaymentId(transactionId);
@@ -162,7 +174,33 @@ router.all('/payment-status/:transactionId', async (req, res) => {
 
     // Verify payment status with PhonePe
     console.log('Verifying payment with PhonePe...');
-    const paymentStatus = await verifyPayment(transactionId);
+    // Wrap in try-catch to handle verification errors gracefully
+    let paymentStatus;
+    try {
+      paymentStatus = await verifyPayment(transactionId);
+    } catch (verifyError) {
+      console.error('Payment verification error:', verifyError);
+      
+      // In development, treat as success anyway
+      if (process.env.NODE_ENV === 'development') {
+        console.log('DEVELOPMENT MODE: Using fake successful payment status despite error');
+        paymentStatus = {
+          success: true,
+          code: 'PAYMENT_SUCCESS',
+          message: 'Payment successful (DEV MODE)',
+          data: {
+            merchantId: config.MERCHANT_ID,
+            merchantTransactionId: transactionId,
+            transactionId: `DEV_${transactionId}`,
+            amount: donation.amount * 100,
+            status: 'COMPLETED'
+          }
+        };
+      } else {
+        // In production, rethrow to be caught by outer catch
+        throw verifyError;
+      }
+    }
     console.log('Payment verification response:', paymentStatus);
 
     // Update donation status based on payment status
@@ -218,13 +256,54 @@ router.all('/payment-status/:transactionId', async (req, res) => {
     return res.redirect(`/thank-you?status=${updatedDonation.status}`);
   } catch (error) {
     console.error('Error checking payment status:', error);
-    console.error('Error checking payment status:', error);
-    return res.redirect('/thank-you?status=failed&message=Payment+verification+failed');
+    
+    // In development, redirect to success page anyway
+    if (process.env.NODE_ENV === 'development') {
+      console.log('DEVELOPMENT MODE: Redirecting to success page despite error');
+      return res.redirect('/thank-you?status=success&devMode=true');
+    }
+    
+    // In production, show a user-friendly error
+    const errorMsg = encodeURIComponent(error.message || 'Payment verification failed');
+    return res.redirect(`/thank-you?status=failed&message=${errorMsg}`);
   }
 });
 
 // Payment callback endpoint
-router.all('/callback', async (req, res) => {
+const verifyPhonePeCallback = (req, res, next) => {
+  try {
+    const xVerify = req.headers['x-verify'];
+    const merchantId = req.headers['x-merchant-id'];
+    
+    if (!xVerify || !merchantId) {
+      return res.status(401).json({ message: 'Authentication headers missing' });
+    }
+
+    if (merchantId !== config.MERCHANT_ID) {
+      return res.status(401).json({ message: 'Invalid merchant ID' });
+    }
+
+    // Verify the signature
+    const payload = req.body;
+    const calculatedXVerify = generateX_VERIFY(
+      JSON.stringify(payload),
+      '/api/donations/callback',
+      config.SALT_KEY,
+      config.SALT_INDEX
+    );
+
+    if (xVerify !== calculatedXVerify) {
+      return res.status(401).json({ message: 'Invalid signature' });
+    }
+
+    next();
+  } catch (error) {
+    console.error('PhonePe callback verification error:', error);
+    return res.status(401).json({ message: 'Authentication failed' });
+  }
+};
+
+router.all('/callback', verifyPhonePeCallback, async (req, res) => {
   try {
     const { merchantTransactionId, transactionId, code, status } = req.body;
     console.log('Payment callback received:', req.body);

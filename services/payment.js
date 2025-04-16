@@ -70,9 +70,9 @@ const generatePaymentRequest = async (donation) => {
         ? 'https://donate.gomantakgausevak.com/thank-you'
         : 'http://localhost:3000/thank-you',
       redirectMode: "REDIRECT",
-      callbackUrl: process.env.NODE_ENV === 'production'
-        ? 'https://phonepe-donation-server.onrender.com/api/donations/callback'
-        : 'http://localhost:3001/api/donations/callback',
+      callbackUrl: `${process.env.NODE_ENV === 'production'
+        ? 'https://phonepe-donation-server.onrender.com'
+        : 'http://localhost:3001'}/api/donations/callback`,
       paymentInstrument: {
         type: "PAY_PAGE"
       }
