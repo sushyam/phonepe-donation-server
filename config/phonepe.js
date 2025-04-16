@@ -7,7 +7,8 @@ const config = {
   CLIENT_SECRET: process.env.PHONEPE_CLIENT_SECRET || 'MGU0OTE0MTEtMjU5My00NmQ1LWIwYzMtOWY2NTA0ZDAyMjUx',
   CLIENT_VERSION: process.env.PHONEPE_CLIENT_VERSION || '1',
   GRANT_TYPE: process.env.PHONEPE_GRANT_TYPE || 'client_credentials',
-  // SALT_INDEX: process.env.PHONEPE_SALT_INDEX || '', // Not used in OAuth flow
+  SALT_KEY: process.env.PHONEPE_SALT_KEY || '099eb0cd-02cf-4e2a-8aca-3e6c6aff0399',
+  SALT_INDEX: process.env.PHONEPE_SALT_INDEX || '1',
 
   // API URLs - always use UAT sandbox for testing
   API_URL: process.env.NODE_ENV === 'production'

@@ -66,13 +66,13 @@ const generatePaymentRequest = async (donation) => {
       merchantId: config.MERCHANT_ID,
       merchantTransactionId: merchantTransactionId,
       amount: amountInPaisa,
-      redirectUrl: process.env.NODE_ENV === 'production'
-        ? 'https://donate.gomantakgausevak.com/thank-you'
-        : 'http://localhost:3000/thank-you',
+      redirectUrl: `${process.env.NODE_ENV === 'production'
+        ? 'https://donate.gomantakgausevak.com'
+        : 'http://localhost:3000'}/thank-you?txnId=${merchantTransactionId}`,
       redirectMode: "REDIRECT",
       callbackUrl: `${process.env.NODE_ENV === 'production'
         ? 'https://phonepe-donation-server.onrender.com'
-        : 'http://localhost:3001'}/api/donations/callback`,
+        : 'http://localhost:3001'}/api/donations/payment-status/${merchantTransactionId}`,
       paymentInstrument: {
         type: "PAY_PAGE"
       }
@@ -128,23 +128,26 @@ const generatePaymentRequest = async (donation) => {
       throw new Error('No checkout page URL in response');
     }
 
+    // Log the payment URL for debugging
+    logDebug('Generated payment URL', checkoutPageUrl);
+
     return {
       paymentUrl: checkoutPageUrl,
-      merchantTransactionId
+      merchantTransactionId,
+      success: true,
+      message: 'Payment URL generated successfully'
     };
 
   } catch (error) {
     console.error('Error generating payment request:', error);
-    
-    // In development, provide a test URL
-    if (process.env.NODE_ENV === 'development') {
-      return {
-        paymentUrl: `http://localhost:3000/thank-you?txnId=TEST_${Date.now()}&status=success`,
-        merchantTransactionId: `TEST_${Date.now()}`
-      };
+    if (error.response) {
+      console.error('PhonePe API Error:', {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers
+      });
     }
-    
-    throw error;
+    throw new Error(error.response?.data?.message || error.message || 'Failed to generate payment URL');
   }
 };
 

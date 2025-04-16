@@ -76,8 +76,12 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Update donation with transaction ID
-    await donationService.updateDonation(donation.id, { paymentId: merchantTransactionId });
+    // Update donation with transaction ID and payment URL
+    await donationService.updateDonation(donation.id, { 
+      paymentId: merchantTransactionId,
+      payment_url: paymentUrl,
+      status: 'pending'
+    });
 
     res.status(201).json({
       message: 'Donation created successfully',
@@ -120,6 +124,23 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
 // Update donation status after payment
 router.all('/payment-status/:transactionId', async (req, res) => {
+  console.log('Payment status route hit:', {
+    method: req.method,
+    transactionId: req.params.transactionId,
+    body: req.body,
+    query: req.query
+  });
+  // Set CORS headers for payment status endpoint
+  res.header('Access-Control-Allow-Origin', process.env.NODE_ENV === 'production' 
+    ? 'https://donate.gomantakgausevak.com' 
+    : 'http://localhost:3000');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
   try {
     const { transactionId } = req.params;
     console.log('Checking payment status for transaction:', transactionId);
